@@ -27,7 +27,6 @@ type WrappedSongUserTokens = {
     [key: string]: {
       amount: number;
       timestamp: number;
-      value: number;
     }[];
   };
 };
@@ -54,35 +53,30 @@ function App() {
           {
             amount: 2000,
             timestamp: 0,
-            value: 0,
           },
         ],
         user2: [
           {
             amount: 2000,
             timestamp: 0,
-            value: 0,
           },
         ],
         user3: [
           {
             amount: 2000,
             timestamp: 0,
-            value: 0,
           },
         ],
         user4: [
           {
             amount: 2000,
             timestamp: 0,
-            value: 0,
           },
         ],
         user5: [
           {
             amount: 2000,
             timestamp: 0,
-            value: 0,
           },
         ],
       },
@@ -145,41 +139,6 @@ function App() {
                   onClick={() => {
                     let amount = 0;
                     let diff = 0;
-
-                    setWrappedSongUserTokens((prev) => {
-                      const updatedTokens = { ...prev };
-
-                      // Update token values based on distributor timestamps
-                      updatedTokens[wrappedSongId][userId] = prev[
-                        wrappedSongId
-                      ][userId].map((token) => {
-                        // Get all distributor timestamps that are after this token's timestamp
-                        // and before the last claim timestamp
-                        const applicableTimestamps =
-                          distributorTimestamps.filter(
-                            (ts) =>
-                              ts.timestamp > token.timestamp &&
-                              ts.timestamp >
-                                wrappedSongUserClaimed[wrappedSongId][userId]
-                                  .timestamp
-                          );
-
-                        // Sum up the amounts from applicable timestamps, dividing by 10000 since each token is 1/10000
-                        const additionalValue = applicableTimestamps.reduce(
-                          (sum, ts) => sum + ts.amount / 10000,
-                          0
-                        );
-
-                        // Only update value if it's currently 0
-                        return {
-                          ...token,
-                          value:
-                            token.value === 0 ? additionalValue : token.value,
-                        };
-                      });
-
-                      return updatedTokens;
-                    });
 
                     setWrappedSongUserClaimed((prev) => {
                       //Get distributor timestamps that are greater than user timestamp and add them.

@@ -1,153 +1,139 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract WrappedSongDistributor is Ownable {
-    struct DistributorTimestamp {
+/**
+ * @title WrappedSongToken
+ * @notice This contract manages the tokenization of songs and their revenue distribution
+ * @dev Main features:
+ * 1. Users can hold tokens representing song ownership
+ * 2. Revenue is distributed based on token holdings
+ * 3. Users can transfer tokens
+ * 4. Users can claim their earnings
+ */
+contract WrappedSongToken is ERC20, Ownable {
+    // Struct to track distribution events
+    struct Distribution {
         uint256 timestamp;
         uint256 amount;
         uint256 remainingAmount;
     }
 
-    struct UserToken {
-        uint256 amount;
-        uint256 timestamp;
-        uint256 value;
-    }
-
+    // Struct to track user claims
     struct UserClaim {
         uint256 amount;
-        uint256 timestamp;
+        uint256 lastClaimTimestamp;
     }
 
-    // USDC token contract
-    IERC20 public usdcToken;
+    // Array of all distribution events
+    Distribution[] public distributions;
 
-    // Total earnings in the contract
-    uint256 public totalEarnings;
+    // Mapping of user address to their claim info
+    mapping(address => UserClaim) public userClaims;
 
-    // Array to store distribution events
-    DistributorTimestamp[] public distributorTimestamps;
+    // Mapping to track token acquisition timestamps
+    mapping(address => mapping(uint256 => uint256))
+        public tokenAcquisitionTimestamps;
 
-    // Mapping: songId => userId => UserToken[]
-    mapping(bytes32 => mapping(address => UserToken[])) public userTokens;
+    uint256 public constant PRECISION = 10000;
 
-    // Mapping: songId => userId => UserClaim
-    mapping(bytes32 => mapping(address => UserClaim)) public userClaims;
+    constructor(string memory name, string memory symbol) ERC20(name, symbol) {}
 
-    // Constants
-    uint256 private constant PRECISION = 10000;
-
-    event TokensTransferred(
-        bytes32 songId,
-        address from,
-        address to,
-        uint256 amount
-    );
-    event EarningsClaimed(bytes32 songId, address user, uint256 amount);
-    event DistributionAdded(uint256 timestamp, uint256 amount);
-
-    constructor(address _usdcToken) {
-        usdcToken = IERC20(_usdcToken);
-    }
-
-    function addDistribution(uint256 amount) external onlyOwner {
-        require(
-            usdcToken.transferFrom(msg.sender, address(this), amount),
-            "Transfer failed"
-        );
-
-        distributorTimestamps.push(
-            DistributorTimestamp({
+    /**
+     * @notice Distributes new revenue to token holders
+     * @param amount Amount of USDC to distribute
+     */
+    function distributeRevenue(uint256 amount) external onlyOwner {
+        distributions.push(
+            Distribution({
                 timestamp: block.timestamp,
                 amount: amount,
                 remainingAmount: amount
             })
         );
-
-        totalEarnings += amount;
-
-        emit DistributionAdded(block.timestamp, amount);
     }
 
-    function claimEarnings(bytes32 songId) external {
-        UserClaim storage userClaim = userClaims[songId][msg.sender];
-        UserToken[] storage tokens = userTokens[songId][msg.sender];
+    /**
+     * @notice Allows users to claim their earned revenue
+     * @dev Calculates earnings based on token holdings during each distribution period
+     * @return claimedAmount The amount claimed
+     */
+    function claimEarnings() external returns (uint256 claimedAmount) {
+        UserClaim storage userClaim = userClaims[msg.sender];
+        uint256 userBalance = balanceOf(msg.sender);
 
-        uint256 earnings = 0;
+        for (uint256 i = 0; i < distributions.length; i++) {
+            Distribution storage dist = distributions[i];
 
-        // Calculate earnings from each distribution timestamp
-        for (uint256 i = 0; i < distributorTimestamps.length; i++) {
-            DistributorTimestamp storage dt = distributorTimestamps[i];
+            // Skip if distribution is before last claim
+            if (dist.timestamp <= userClaim.lastClaimTimestamp) continue;
+            if (dist.remainingAmount == 0) continue;
 
-            if (dt.timestamp <= userClaim.timestamp) continue;
-
-            // Calculate earnings for each token
-            for (uint256 j = 0; j < tokens.length; j++) {
-                UserToken storage token = tokens[j];
-                if (token.timestamp <= dt.timestamp) {
-                    uint256 tokenEarnings = (token.amount * dt.amount) /
-                        PRECISION;
-                    earnings += tokenEarnings;
-                    dt.remainingAmount -= tokenEarnings;
-                }
-            }
+            // Calculate user's share of this distribution
+            uint256 userShare = (userBalance * dist.amount) /
+                (totalSupply() * PRECISION);
+            claimedAmount += userShare;
+            dist.remainingAmount -= userShare;
         }
 
-        require(earnings > 0, "No earnings to claim");
+        require(claimedAmount > 0, "No earnings to claim");
 
-        // Update user claim
-        userClaim.amount += earnings;
-        userClaim.timestamp = block.timestamp;
+        userClaim.amount += claimedAmount;
+        userClaim.lastClaimTimestamp = block.timestamp;
 
-        // Consolidate tokens into a single token
-        uint256 totalAmount = 0;
-        for (uint256 i = 0; i < tokens.length; i++) {
-            totalAmount += tokens[i].amount;
-        }
-
-        delete userTokens[songId][msg.sender];
-        userTokens[songId][msg.sender].push(
-            UserToken({
-                amount: totalAmount,
-                timestamp: block.timestamp,
-                value: 0
-            })
-        );
-
-        // Transfer USDC to user
-        require(usdcToken.transfer(msg.sender, earnings), "Transfer failed");
-
-        emit EarningsClaimed(songId, msg.sender, earnings);
+        // Here you would typically transfer USDC to the user
+        // Requires USDC integration
     }
 
-    function transferTokens(
-        bytes32 songId,
-        address recipient,
+    /**
+     * @notice Override of ERC20 transfer to track token acquisition timestamps
+     * @param to Recipient address
+     * @param amount Amount of tokens to transfer
+     */
+    function transfer(
+        address to,
         uint256 amount
-    ) external {
-        require(recipient != msg.sender, "Cannot transfer to self");
-        require(recipient != address(0), "Invalid recipient");
+    ) public virtual override returns (bool) {
+        require(to != address(0), "Cannot transfer to zero address");
+        require(to != msg.sender, "Cannot transfer to self");
 
-        UserToken[] storage senderTokens = userTokens[songId][msg.sender];
+        // Update token acquisition timestamp for recipient
+        tokenAcquisitionTimestamps[to][block.timestamp] = amount;
 
-        uint256 totalSenderTokens = 0;
-        for (uint256 i = 0; i < senderTokens.length; i++) {
-            totalSenderTokens += senderTokens[i].amount;
-        }
+        return super.transfer(to, amount);
+    }
 
-        require(totalSenderTokens >= amount, "Insufficient tokens");
+    /**
+     * @notice Mints initial tokens to users
+     * @param user Address to mint tokens to
+     * @param amount Amount of tokens to mint
+     */
+    function mintInitialTokens(
+        address user,
+        uint256 amount
+    ) external onlyOwner {
+        _mint(user, amount);
+        tokenAcquisitionTimestamps[user][block.timestamp] = amount;
+    }
 
-        // Create new token for recipient
-        userTokens[songId][recipient].push(
-            UserToken({amount: amount, timestamp: block.timestamp, value: 0})
-        );
+    /**
+     * @notice Gets all distributions
+     * @return Distribution[] Array of all distribution events
+     */
+    function getDistributions() external view returns (Distribution[] memory) {
+        return distributions;
+    }
 
-        // Update sender's tokens
-        senderTokens[0].amount -= amount;
-
-        emit TokensTransferred(songId, msg.sender, recipient, amount);
+    /**
+     * @notice Gets user's claim info
+     * @param user Address of user
+     * @return UserClaim struct containing user's claim info
+     */
+    function getUserClaim(
+        address user
+    ) external view returns (UserClaim memory) {
+        return userClaims[user];
     }
 }
