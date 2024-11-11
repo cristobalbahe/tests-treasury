@@ -147,8 +147,11 @@ function App() {
                           (ts) =>
                             ts.timestamp >
                             //EARLIEST TIMESTAMP
-                            wrappedSongUserTokens[wrappedSongId][userId][0]
-                              .timestamp
+                            Math.min(
+                              ...wrappedSongUserTokens[wrappedSongId][
+                                userId
+                              ].map((token) => token.timestamp)
+                            )
                         )
                         .reduce((sum, ts) => {
                           // Calculate earnings for each token based on timestamp
@@ -158,6 +161,15 @@ function App() {
                             // If token was created before this distribution timestamp
                             if (token.timestamp <= ts.timestamp) {
                               // Use the token's value property multiplied by amount
+                              console.log("token sum", tokenSum);
+                              console.log(
+                                "ADDING THE MULTIPLICATION OF ",
+                                token.amount / 10000,
+                                "AND",
+                                ts.amount,
+                                "=",
+                                (token.amount / 10000) * ts.amount
+                              );
                               return (
                                 tokenSum + (token.amount / 10000) * ts.amount
                               );
@@ -179,8 +191,11 @@ function App() {
                           if (
                             ts.timestamp >
                             //EARLIEST TIMESTAMP
-                            wrappedSongUserTokens[wrappedSongId][userId][0]
-                              .timestamp
+                            Math.min(
+                              ...wrappedSongUserTokens[wrappedSongId][
+                                userId
+                              ].map((token) => token.timestamp)
+                            )
                           ) {
                             // Calculate how much this user is claiming from this epoch
                             const userTokens =
@@ -222,7 +237,6 @@ function App() {
                                 0
                               ),
                               timestamp: Date.now(),
-                              value: 0,
                             },
                           ],
                         },
@@ -274,6 +288,7 @@ function App() {
                             ) as HTMLInputElement
                           ).value
                         );
+                        console.log("TOKEN AMOUNT", tokenAmount);
 
                         // return;
 
@@ -291,47 +306,67 @@ function App() {
                           return;
                         }
 
-                        setWrappedSongUserTokens((prev) => ({
-                          ...prev,
-                          [wrappedSongId]: {
-                            ...prev[wrappedSongId],
-                            [recipientId]: [
-                              ...prev[wrappedSongId][recipientId],
-                              {
-                                amount: tokenAmount,
-                                timestamp:
-                                  distributorTimestamps.filter(
-                                    (ts) =>
-                                      ts.timestamp <= Date.now() &&
-                                      ts.timestamp >
-                                        wrappedSongUserTokens[wrappedSongId][
-                                          userId
-                                        ][0].timestamp
-                                  )[0]?.timestamp || Date.now(),
-                                value: distributorTimestamps
-                                  .filter(
-                                    (ts) =>
-                                      ts.timestamp <= Date.now() &&
-                                      ts.timestamp >
-                                        //EARLIEST TIMESTAMP
-                                        wrappedSongUserTokens[wrappedSongId][
-                                          userId
-                                        ][0].timestamp
-                                  )
-                                  .reduce(
-                                    (sum, ts) => sum + (1 / 10000) * ts.amount,
-                                    0
-                                  ),
-                              },
-                            ],
-                            [userId]: prev[wrappedSongId][userId].map(
-                              (token) => ({
-                                ...token,
-                                amount: token.amount - tokenAmount,
-                              })
-                            ),
-                          },
-                        }));
+                        setWrappedSongUserTokens((prev) => {
+                          let remainingAmount = tokenAmount;
+                          const updatedSenderTokens = [
+                            ...prev[wrappedSongId][userId],
+                          ];
+                          const newRecipientTokens = [];
+
+                          // Go through sender's tokens from oldest to newest
+                          for (
+                            let i = 0;
+                            i < updatedSenderTokens.length &&
+                            remainingAmount > 0;
+                            i++
+                          ) {
+                            const available = updatedSenderTokens[i].amount;
+                            const amountToDeduct = Math.min(
+                              available,
+                              remainingAmount
+                            );
+
+                            if (amountToDeduct > 0) {
+                              // Add to recipient's tokens with same timestamp as source
+                              newRecipientTokens.push({
+                                amount: amountToDeduct,
+                                timestamp: updatedSenderTokens[i].timestamp,
+                              });
+
+                              // Deduct from sender's tokens
+                              updatedSenderTokens[i] = {
+                                ...updatedSenderTokens[i],
+                                amount: available - amountToDeduct,
+                              };
+
+                              remainingAmount -= amountToDeduct;
+                            }
+                          }
+
+                          // If we couldn't find enough tokens, alert and return unchanged state
+                          if (remainingAmount > 0) {
+                            alert("Insufficient tokens");
+                            return prev;
+                          }
+
+                          // Remove any entries that have 0 amount
+                          const filteredSenderTokens =
+                            updatedSenderTokens.filter(
+                              (token) => token.amount > 0
+                            );
+
+                          return {
+                            ...prev,
+                            [wrappedSongId]: {
+                              ...prev[wrappedSongId],
+                              [recipientId]: [
+                                ...prev[wrappedSongId][recipientId],
+                                ...newRecipientTokens,
+                              ],
+                              [userId]: filteredSenderTokens,
+                            },
+                          };
+                        });
                       }}
                     >
                       Send Tokens
