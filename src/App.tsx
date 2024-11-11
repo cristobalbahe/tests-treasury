@@ -10,6 +10,7 @@ import "./App.css";
 type DistributorTimestamp = {
   timestamp: number;
   amount: number;
+  remainingAmount: number;
 };
 
 type WrappedSongUserClaimed = {
@@ -231,56 +232,63 @@ function App() {
 
                           return sum + earnings;
                         }, 0);
-                      console.log(
-                        "earnings",
-                        distributorTimestamps
-                          .filter(
-                            (ts) =>
-                              ts.timestamp >
-                              prev[wrappedSongId][userId].timestamp
-                          )
-                          .reduce((sum, ts) => {
-                            // Calculate earnings for each token based on timestamp
-                            const earnings = wrappedSongUserTokens[
-                              wrappedSongId
-                            ][userId].reduce((tokenSum, token) => {
-                              // If token was created before this distribution timestamp
-                              console.log("TOKEN SUM  IS", tokenSum);
-                              console.log(
-                                "adding multiplied value of ",
-                                token.value,
-                                "and",
-                                token.amount,
-                                "which is",
-                                token.value * token.amount
-                              );
 
-                              if (token.timestamp <= ts.timestamp) {
-                                // Use the token's value property multiplied by amount
-                                return tokenSum + token.value * token.amount;
-                              }
-                              return tokenSum;
-                            }, 0);
-
-                            return sum + earnings;
-                          }, 0)
-                      );
-                      console.log(
-                        "wrappedSongUserTokens",
-                        wrappedSongUserTokens[wrappedSongId][userId]
-                      );
-                      console.log(
-                        "DISTRIBUTOR TIMESTAMPS",
-                        distributorTimestamps
-                      );
-                      console.log(
-                        "CURRENT WRAPPED SONG TIMESTAMP",
-                        prev[wrappedSongId][userId].timestamp
-                      );
-                      console.log("DIFF", diff);
                       //add this to the amount they had before to have what they own now
                       amount = prev[wrappedSongId][userId].amount + diff;
                       // Update all token timestamps to now
+
+                      // Update the remaining amounts in distributor timestamps
+                      setDistributorTimestamps((prevTimestamps) => {
+                        const updatedTimestamps = prevTimestamps.map((ts) => {
+                          if (
+                            ts.timestamp > prev[wrappedSongId][userId].timestamp
+                          ) {
+                            // Calculate how much this user is claiming from this epoch
+                            const userTokens =
+                              wrappedSongUserTokens[wrappedSongId][userId];
+                            const claimAmount = userTokens.reduce(
+                              (sum, token) => {
+                                if (token.timestamp <= ts.timestamp) {
+                                  return (
+                                    sum + (token.amount / 10000) * ts.amount
+                                  );
+                                }
+                                return sum;
+                              },
+                              0
+                            );
+
+                            return {
+                              ...ts,
+                              remainingAmount: ts.remainingAmount - claimAmount,
+                            };
+                          }
+                          return ts;
+                        });
+
+                        // Filter out any timestamps where remainingAmount is 0
+                        return updatedTimestamps.filter(
+                          (ts) => ts.remainingAmount > 0
+                        );
+                      });
+
+                      setWrappedSongUserTokens((prev) => ({
+                        ...prev,
+                        [wrappedSongId]: {
+                          ...prev[wrappedSongId],
+                          [userId]: [
+                            {
+                              amount: prev[wrappedSongId][userId].reduce(
+                                (sum, token) => sum + token.amount,
+                                0
+                              ),
+                              timestamp: Date.now(),
+                              value: 0,
+                              correspondingEarnings: 0,
+                            },
+                          ],
+                        },
+                      }));
 
                       return {
                         ...prev,
@@ -429,7 +437,11 @@ function App() {
         onClick={() => {
           setDistributorTimestamps((prev) => [
             ...prev,
-            { timestamp: Date.now(), amount: 100 },
+            {
+              timestamp: Date.now(),
+              amount: 100,
+              remainingAmount: 100, // Initialize with full amount
+            },
           ]);
           setWrappedSongEarnings((prev) => prev + 100);
         }}
@@ -440,7 +452,8 @@ function App() {
         <h2>Distributor timestamps</h2>
         {distributorTimestamps.map((timestamp) => (
           <div key={timestamp.timestamp}>
-            {timestamp.timestamp}: {timestamp.amount} USDC
+            {timestamp.timestamp}: {timestamp.amount} USDC (Remaining:{" "}
+            {timestamp.remainingAmount.toFixed(2)} USDC)
           </div>
         ))}
       </div>
