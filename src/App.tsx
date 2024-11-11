@@ -28,7 +28,6 @@ type WrappedSongUserTokens = {
       amount: number;
       timestamp: number;
       value: number;
-      correspondingEarnings: number;
     }[];
   };
 };
@@ -56,7 +55,6 @@ function App() {
             amount: 2000,
             timestamp: 0,
             value: 0,
-            correspondingEarnings: 0,
           },
         ],
         user2: [
@@ -64,7 +62,6 @@ function App() {
             amount: 2000,
             timestamp: 0,
             value: 0,
-            correspondingEarnings: 0,
           },
         ],
         user3: [
@@ -72,7 +69,6 @@ function App() {
             amount: 2000,
             timestamp: 0,
             value: 0,
-            correspondingEarnings: 0,
           },
         ],
         user4: [
@@ -80,7 +76,6 @@ function App() {
             amount: 2000,
             timestamp: 0,
             value: 0,
-            correspondingEarnings: 0,
           },
         ],
         user5: [
@@ -88,7 +83,6 @@ function App() {
             amount: 2000,
             timestamp: 0,
             value: 0,
-            correspondingEarnings: 0,
           },
         ],
       },
@@ -141,12 +135,7 @@ function App() {
                 tokens
               </span>{" "}
               -{" "}
-              <span
-                onClick={() => {
-                  console.log(wrappedSongUserClaimed[wrappedSongId][userId]);
-                }}
-                style={{ backgroundColor: "lightblue" }}
-              >
+              <span onClick={() => {}} style={{ backgroundColor: "lightblue" }}>
                 Claimed: {wrappedSongUserClaimed[wrappedSongId][userId].amount}{" "}
                 USDC
               </span>{" "}
@@ -180,28 +169,13 @@ function App() {
                           (sum, ts) => sum + ts.amount / 10000,
                           0
                         );
-                        const additionalEarnings = applicableTimestamps.reduce(
-                          (sum, ts) => sum + ts.amount,
-                          0
-                        );
-                        console.log("additionalValue", additionalValue);
-                        console.log("additionalEarnings", additionalEarnings);
 
                         // Only update value if it's currently 0
                         return {
                           ...token,
                           value:
                             token.value === 0 ? additionalValue : token.value,
-                          correspondingEarnings:
-                            token.correspondingEarnings === 0
-                              ? additionalEarnings
-                              : token.correspondingEarnings,
                         };
-                        // return {
-                        //   ...token,
-                        //   value: additionalValue,
-                        //   correspondingEarnings: additionalEarnings,
-                        // };
                       });
 
                       return updatedTokens;
@@ -284,7 +258,6 @@ function App() {
                               ),
                               timestamp: Date.now(),
                               value: 0,
-                              correspondingEarnings: 0,
                             },
                           ],
                         },
@@ -337,30 +310,6 @@ function App() {
                           ).value
                         );
 
-                        const diff = distributorTimestamps
-                          .filter(
-                            (ts) =>
-                              ts.timestamp >
-                              wrappedSongUserClaimed[wrappedSongId][userId]
-                                .timestamp
-                          )
-                          .reduce((sum, ts) => {
-                            // Calculate earnings for each token using its stored value
-                            const earnings = wrappedSongUserTokens[
-                              wrappedSongId
-                            ][userId]
-                              .filter(
-                                (token) => token.timestamp <= ts.timestamp
-                              )
-                              .reduce((tokenSum, token) => {
-                                // Use the token's stored value property
-                                return tokenSum + token.amount * token.value;
-                              }, 0);
-
-                            return sum + earnings;
-                          }, 0);
-                        console.log("diff", diff);
-
                         // return;
 
                         //Now if the user that wants to send tokend still hasn't claimed their money, we need to calculate the total earnings that would have accumulated until then
@@ -407,9 +356,6 @@ function App() {
                                     (sum, ts) => sum + (1 / 10000) * ts.amount,
                                     0
                                   ),
-                                correspondingEarnings: distributorTimestamps
-                                  .filter((ts) => ts.timestamp <= Date.now())
-                                  .reduce((sum, ts) => sum + ts.amount, 0),
                               },
                             ],
                             [userId]: prev[wrappedSongId][userId].map(

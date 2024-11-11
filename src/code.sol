@@ -1,30 +1,44 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract MusicRoyaltyDistributor {
-    struct Distribution {
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract WrappedSongDistributor is Ownable {
+    struct DistributorTimestamp {
         uint256 timestamp;
         uint256 amount;
         uint256 remainingAmount;
     }
 
-    struct TokenHolder {
+    struct UserToken {
         uint256 amount;
         uint256 timestamp;
         uint256 value;
-        uint256 correspondingEarnings;
     }
 
-    struct ClaimInfo {
+    struct UserClaim {
         uint256 amount;
         uint256 timestamp;
     }
 
-    // Main state variables
-    mapping(bytes32 => mapping(address => TokenHolder[])) public songUserTokens;
-    mapping(bytes32 => mapping(address => ClaimInfo)) public songUserClaims;
-    Distribution[] public distributions;
+    // USDC token contract
+    IERC20 public usdcToken;
+
+    // Total earnings in the contract
     uint256 public totalEarnings;
+
+    // Array to store distribution events
+    DistributorTimestamp[] public distributorTimestamps;
+
+    // Mapping: songId => userId => UserToken[]
+    mapping(bytes32 => mapping(address => UserToken[])) public userTokens;
+
+    // Mapping: songId => userId => UserClaim
+    mapping(bytes32 => mapping(address => UserClaim)) public userClaims;
+
+    // Constants
+    uint256 private constant PRECISION = 10000;
 
     event TokensTransferred(
         bytes32 songId,
@@ -35,73 +49,78 @@ contract MusicRoyaltyDistributor {
     event EarningsClaimed(bytes32 songId, address user, uint256 amount);
     event DistributionAdded(uint256 timestamp, uint256 amount);
 
-    function addDistribution(uint256 amount) external {
-        distributions.push(
-            Distribution({
+    constructor(address _usdcToken) {
+        usdcToken = IERC20(_usdcToken);
+    }
+
+    function addDistribution(uint256 amount) external onlyOwner {
+        require(
+            usdcToken.transferFrom(msg.sender, address(this), amount),
+            "Transfer failed"
+        );
+
+        distributorTimestamps.push(
+            DistributorTimestamp({
                 timestamp: block.timestamp,
                 amount: amount,
                 remainingAmount: amount
             })
         );
+
         totalEarnings += amount;
+
         emit DistributionAdded(block.timestamp, amount);
     }
 
     function claimEarnings(bytes32 songId) external {
-        ClaimInfo storage userClaim = songUserClaims[songId][msg.sender];
-        TokenHolder[] storage userTokens = songUserTokens[songId][msg.sender];
+        UserClaim storage userClaim = userClaims[songId][msg.sender];
+        UserToken[] storage tokens = userTokens[songId][msg.sender];
 
-        uint256 totalClaim = 0;
+        uint256 earnings = 0;
 
-        // Calculate earnings from each distribution period
-        for (uint256 i = 0; i < distributions.length; i++) {
-            Distribution storage dist = distributions[i];
-            if (dist.timestamp > userClaim.timestamp) {
-                uint256 periodEarnings = 0;
+        // Calculate earnings from each distribution timestamp
+        for (uint256 i = 0; i < distributorTimestamps.length; i++) {
+            DistributorTimestamp storage dt = distributorTimestamps[i];
 
-                // Calculate earnings for each token holding
-                for (uint256 j = 0; j < userTokens.length; j++) {
-                    TokenHolder storage token = userTokens[j];
-                    if (token.timestamp <= dist.timestamp) {
-                        uint256 share = (token.amount * 1e18) / 10000; // Convert to 18 decimals
-                        uint256 earning = (share * dist.amount) / 1e18;
-                        periodEarnings += earning;
-                    }
+            if (dt.timestamp <= userClaim.timestamp) continue;
+
+            // Calculate earnings for each token
+            for (uint256 j = 0; j < tokens.length; j++) {
+                UserToken storage token = tokens[j];
+                if (token.timestamp <= dt.timestamp) {
+                    uint256 tokenEarnings = (token.amount * dt.amount) /
+                        PRECISION;
+                    earnings += tokenEarnings;
+                    dt.remainingAmount -= tokenEarnings;
                 }
-
-                dist.remainingAmount -= periodEarnings;
-                totalClaim += periodEarnings;
             }
         }
 
-        require(totalClaim > 0, "No earnings to claim");
+        require(earnings > 0, "No earnings to claim");
 
-        // Update claim info
-        userClaim.amount += totalClaim;
+        // Update user claim
+        userClaim.amount += earnings;
         userClaim.timestamp = block.timestamp;
 
-        // Consolidate tokens into a single holding
-        uint256 totalTokens = 0;
-        for (uint256 i = 0; i < userTokens.length; i++) {
-            totalTokens += userTokens[i].amount;
+        // Consolidate tokens into a single token
+        uint256 totalAmount = 0;
+        for (uint256 i = 0; i < tokens.length; i++) {
+            totalAmount += tokens[i].amount;
         }
 
-        delete songUserTokens[songId][msg.sender];
-        songUserTokens[songId][msg.sender].push(
-            TokenHolder({
-                amount: totalTokens,
+        delete userTokens[songId][msg.sender];
+        userTokens[songId][msg.sender].push(
+            UserToken({
+                amount: totalAmount,
                 timestamp: block.timestamp,
-                value: 0,
-                correspondingEarnings: 0
+                value: 0
             })
         );
 
-        totalEarnings -= totalClaim;
+        // Transfer USDC to user
+        require(usdcToken.transfer(msg.sender, earnings), "Transfer failed");
 
-        // Transfer earnings to user (implementation depends on token type)
-        // payable(msg.sender).transfer(totalClaim);
-
-        emit EarningsClaimed(songId, msg.sender, totalClaim);
+        emit EarningsClaimed(songId, msg.sender, earnings);
     }
 
     function transferTokens(
@@ -109,27 +128,24 @@ contract MusicRoyaltyDistributor {
         address recipient,
         uint256 amount
     ) external {
-        require(recipient != msg.sender, "Cannot send tokens to yourself");
+        require(recipient != msg.sender, "Cannot transfer to self");
         require(recipient != address(0), "Invalid recipient");
 
-        TokenHolder[] storage senderTokens = songUserTokens[songId][msg.sender];
-        uint256 senderTotal = 0;
-        for (uint256 i = 0; i < senderTokens.length; i++) {
-            senderTotal += senderTokens[i].amount;
-        }
-        require(senderTotal >= amount, "Insufficient tokens");
+        UserToken[] storage senderTokens = userTokens[songId][msg.sender];
 
-        // Create new token holding for recipient
-        songUserTokens[songId][recipient].push(
-            TokenHolder({
-                amount: amount,
-                timestamp: block.timestamp,
-                value: 0,
-                correspondingEarnings: 0
-            })
+        uint256 totalSenderTokens = 0;
+        for (uint256 i = 0; i < senderTokens.length; i++) {
+            totalSenderTokens += senderTokens[i].amount;
+        }
+
+        require(totalSenderTokens >= amount, "Insufficient tokens");
+
+        // Create new token for recipient
+        userTokens[songId][recipient].push(
+            UserToken({amount: amount, timestamp: block.timestamp, value: 0})
         );
 
-        // Reduce sender's tokens
+        // Update sender's tokens
         senderTokens[0].amount -= amount;
 
         emit TokensTransferred(songId, msg.sender, recipient, amount);
