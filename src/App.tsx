@@ -17,7 +17,7 @@ type WrappedSongUserClaimed = {
   [key: string]: {
     [key: string]: {
       amount: number;
-      timestamp: number;
+      // timestamp: number;
     };
   };
 };
@@ -87,23 +87,23 @@ function App() {
       wrappedSong1: {
         user1: {
           amount: 0,
-          timestamp: 0,
+          // timestamp: 0,
         },
         user2: {
           amount: 0,
-          timestamp: 0,
+          // timestamp: 0,
         },
         user3: {
           amount: 0,
-          timestamp: 0,
+          // timestamp: 0,
         },
         user4: {
           amount: 0,
-          timestamp: 0,
+          // timestamp: 0,
         },
         user5: {
           amount: 0,
-          timestamp: 0,
+          // timestamp: 0,
         },
       },
     });
@@ -145,7 +145,10 @@ function App() {
                       diff = distributorTimestamps
                         .filter(
                           (ts) =>
-                            ts.timestamp > prev[wrappedSongId][userId].timestamp
+                            ts.timestamp >
+                            //EARLIEST TIMESTAMP
+                            wrappedSongUserTokens[wrappedSongId][userId][0]
+                              .timestamp
                         )
                         .reduce((sum, ts) => {
                           // Calculate earnings for each token based on timestamp
@@ -174,7 +177,10 @@ function App() {
                       setDistributorTimestamps((prevTimestamps) => {
                         const updatedTimestamps = prevTimestamps.map((ts) => {
                           if (
-                            ts.timestamp > prev[wrappedSongId][userId].timestamp
+                            ts.timestamp >
+                            //EARLIEST TIMESTAMP
+                            wrappedSongUserTokens[wrappedSongId][userId][0]
+                              .timestamp
                           ) {
                             // Calculate how much this user is claiming from this epoch
                             const userTokens =
@@ -298,18 +304,19 @@ function App() {
                                     (ts) =>
                                       ts.timestamp <= Date.now() &&
                                       ts.timestamp >
-                                        wrappedSongUserClaimed[wrappedSongId][
+                                        wrappedSongUserTokens[wrappedSongId][
                                           userId
-                                        ].timestamp
+                                        ][0].timestamp
                                   )[0]?.timestamp || Date.now(),
                                 value: distributorTimestamps
                                   .filter(
                                     (ts) =>
                                       ts.timestamp <= Date.now() &&
                                       ts.timestamp >
-                                        wrappedSongUserClaimed[wrappedSongId][
+                                        //EARLIEST TIMESTAMP
+                                        wrappedSongUserTokens[wrappedSongId][
                                           userId
-                                        ].timestamp
+                                        ][0].timestamp
                                   )
                                   .reduce(
                                     (sum, ts) => sum + (1 / 10000) * ts.amount,
