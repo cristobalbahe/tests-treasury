@@ -1,62 +1,46 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract WrappedSongDistributor is Ownable, ReentrancyGuard {
+/**
+ * @title WrappedSongToken
+ * @notice This contract manages the tokenization of songs and their revenue distribution
+ */
+contract WrappedSongToken is ERC20, Ownable {
+    // Struct to track distribution events
     struct Distribution {
         uint256 timestamp;
         uint256 amount;
         uint256 remainingAmount;
     }
 
-    struct UserToken {
+    // Struct to track user token holdings with timestamps
+    struct TokenHolding {
         uint256 amount;
         uint256 timestamp;
     }
 
-    struct UserClaim {
-        uint256 amount;
-        uint256 lastClaimTimestamp;
-    }
+    // Mapping of user address to their token holdings
+    mapping(address => TokenHolding[]) public userTokens;
 
-    // Song ID => User Address => UserToken[]
-    mapping(bytes32 => mapping(address => UserToken[])) public userTokens;
-
-    // Song ID => User Address => UserClaim
-    mapping(bytes32 => mapping(address => UserClaim)) public userClaims;
-
-    // Array to store all distributions
+    // Array to store all distribution events
     Distribution[] public distributions;
+
+    // Mapping to track claimed amounts per user
+    mapping(address => uint256) public claimedAmounts;
 
     // Total earnings in the contract
     uint256 public totalEarnings;
 
-    // USDC token contract
-    IERC20 public usdcToken;
+    constructor() ERC20("WrappedSongToken", "WST") {}
 
-    event TokensTransferred(
-        bytes32 songId,
-        address from,
-        address to,
-        uint256 amount
-    );
-    event EarningsClaimed(bytes32 songId, address user, uint256 amount);
-    event DistributionAdded(uint256 timestamp, uint256 amount);
-
-    constructor(address _usdcToken) {
-        usdcToken = IERC20(_usdcToken);
-    }
-
+    /**
+     * @notice Adds a new revenue distribution
+     * @param amount The amount of USDC to distribute
+     */
     function addDistribution(uint256 amount) external onlyOwner {
-        require(amount > 0, "Amount must be greater than 0");
-        require(
-            usdcToken.transferFrom(msg.sender, address(this), amount),
-            "Transfer failed"
-        );
-
         distributions.push(
             Distribution({
                 timestamp: block.timestamp,
@@ -64,86 +48,80 @@ contract WrappedSongDistributor is Ownable, ReentrancyGuard {
                 remainingAmount: amount
             })
         );
-
         totalEarnings += amount;
-
-        emit DistributionAdded(block.timestamp, amount);
     }
 
-    function claimEarnings(bytes32 songId) external nonReentrant {
-        UserToken[] storage tokens = userTokens[songId][msg.sender];
-        require(tokens.length > 0, "No tokens owned");
-
+    /**
+     * @notice Allows users to claim their earnings based on token holdings
+     */
+    function claimEarnings() external {
         uint256 earnings = 0;
-        uint256 lastClaimTimestamp = userClaims[songId][msg.sender]
-            .lastClaimTimestamp;
+        address user = msg.sender;
 
-        // Calculate earnings from each distribution
-        for (uint256 i = 0; i < distributions.length; i++) {
+        // Calculate earnings for each distribution event
+        for (uint i = 0; i < distributions.length; i++) {
             Distribution storage dist = distributions[i];
-            if (dist.timestamp > lastClaimTimestamp) {
-                // Calculate earnings for each token based on timestamp
-                for (uint256 j = 0; j < tokens.length; j++) {
-                    if (tokens[j].timestamp <= dist.timestamp) {
-                        uint256 share = (tokens[j].amount * 1e18) / 10000; // Convert to 18 decimals
-                        uint256 earning = (share * dist.amount) / 1e18;
-                        earnings += earning;
-                        dist.remainingAmount -= earning;
-                    }
+
+            // Skip if distribution is fully claimed
+            if (dist.remainingAmount == 0) continue;
+
+            // Calculate user's share for this distribution
+            for (uint j = 0; j < userTokens[user].length; j++) {
+                TokenHolding storage holding = userTokens[user][j];
+
+                if (holding.timestamp <= dist.timestamp) {
+                    // Calculate proportional earnings (similar to React implementation)
+                    uint256 share = (holding.amount * dist.amount) / 10000;
+                    earnings += share;
+                    dist.remainingAmount -= share;
                 }
             }
         }
 
         require(earnings > 0, "No earnings to claim");
 
-        // Update user claim record
-        userClaims[songId][msg.sender].amount += earnings;
-        userClaims[songId][msg.sender].lastClaimTimestamp = block.timestamp;
+        // Update claimed amounts
+        claimedAmounts[user] += earnings;
 
-        // Consolidate tokens into a single token with updated timestamp
-        uint256 totalAmount = 0;
-        for (uint256 i = 0; i < tokens.length; i++) {
-            totalAmount += tokens[i].amount;
-        }
-
-        delete userTokens[songId][msg.sender];
-        userTokens[songId][msg.sender].push(
-            UserToken({amount: totalAmount, timestamp: block.timestamp})
+        // Reset user's token timestamp to current
+        uint256 totalTokens = balanceOf(user);
+        delete userTokens[user];
+        userTokens[user].push(
+            TokenHolding({amount: totalTokens, timestamp: block.timestamp})
         );
 
-        // Transfer USDC to user
-        require(usdcToken.transfer(msg.sender, earnings), "Transfer failed");
-        totalEarnings -= earnings;
-
-        emit EarningsClaimed(songId, msg.sender, earnings);
+        // Transfer earnings (assuming USDC integration)
+        // This would require actual USDC contract integration
+        // USDC.transfer(user, earnings);
     }
 
-    function transferTokens(
-        bytes32 songId,
-        address recipient,
-        uint256 amount
-    ) external {
-        require(recipient != msg.sender, "Cannot transfer to self");
-        require(recipient != address(0), "Invalid recipient");
-        require(amount > 0, "Amount must be greater than 0");
-
-        UserToken[] storage senderTokens = userTokens[songId][msg.sender];
-        require(senderTokens.length > 0, "No tokens owned");
-
-        uint256 senderTotal = 0;
-        for (uint256 i = 0; i < senderTokens.length; i++) {
-            senderTotal += senderTokens[i].amount;
-        }
-        require(senderTotal >= amount, "Insufficient tokens");
+    /**
+     * @notice Allows users to transfer tokens while maintaining timestamp data
+     * @param to Recipient address
+     * @param amount Amount of tokens to transfer
+     */
+    function transferWithTimestamp(address to, uint256 amount) external {
+        require(balanceOf(msg.sender) >= amount, "Insufficient balance");
 
         // Transfer tokens
-        userTokens[songId][recipient].push(
-            UserToken({amount: amount, timestamp: block.timestamp})
+        _transfer(msg.sender, to, amount);
+
+        // Update sender's token holdings
+        uint256 senderTotal = balanceOf(msg.sender);
+        delete userTokens[msg.sender];
+        userTokens[msg.sender].push(
+            TokenHolding({amount: senderTotal, timestamp: block.timestamp})
         );
 
-        // Update sender's tokens
-        senderTokens[0].amount -= amount;
-
-        emit TokensTransferred(songId, msg.sender, recipient, amount);
+        // Update recipient's token holdings
+        userTokens[to].push(
+            TokenHolding({amount: amount, timestamp: block.timestamp})
+        );
     }
+
+    // Additional helper functions would be needed for:
+    // - Viewing unclaimed earnings
+    // - Getting user token history
+    // - USDC integration
+    // - Emergency functions
 }
